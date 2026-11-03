@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Кран-балансир: Момент силы</title>
+<style>
+  body {
+    margin: 0;
+    background: #e0f2fe;
+    color: #0f172a;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    user-select: none;
+  }
+  h1 { font-size: 1.2rem; margin: 15px 0 5px; color: #0369a1; }
+  p.sub { margin: 0 0 15px; font-size: 0.9rem; color: #64748b; text-align: center; max-width: 90%; }
+  
+  #wrap {
+    position: relative;
+    width: 96%;
+    max-width: 600px;
+    margin-bottom: 15px;
+  }
+  canvas {
+    background: linear-gradient(#bae6fd, #e0f2fe);
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    display: block;
+    width: 100%;
+    height: auto;
+    touch-action: none;
+    border: 2px solid #bae6fd;
+    cursor: grab;
+  }
+  canvas:active { cursor: grabbing; }
+
+  /* ПАНЕЛЬ ДАННЫХ */
+  #hud {
+    background: #ffffff;
+    width: 90%;
+    max-width: 560px;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    font-family: monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    border: 1px solid #e2e8f0;
+    margin-bottom: 20px;
+  }
+  #hud b { color: #0369a1; }
+  .ok { color: #16a34a; font-weight: bold; }
+  .bad { color: #dc2626; font-weight: bold; }
+  .highlight { background: #fef08a; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+  
+  /* КНОПКИ */
+  .controls {
+    display: flex;
+    gap: 10px;
+    width: 90%;
+    max-width: 560px;
+    margin-bottom: 20px;
+  }
+  button {
+    flex: 1;
+    padding: 14px;
+    border: 0;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    background: #0284c7;
+    color: #fff;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transition: transform 0.1s, background 0.1s;
+  }
+  button:active { transform: scale(0.95); }
+  #btnReset { background: #cbd5e1; color: #334155; }
+  
+  /* Кнопка "Дальше" становится зеленой при победе */
+  #btnNew.win {
+    background: #22c55e;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+  }
+</style>
+</head>
+<body>
+<h1>🏗 Кран-балансир</h1>
+<p class="sub">Двигайте <b>оба груза</b> мышкой или пальцем, чтобы уравновесить стрелу.</p>
+
+<div id="wrap">
+  <canvas id="c" width="800" height="500"></canvas>
+</div>
+
+<div id="hud"></div>
+
+<div class="controls">
+  <button id="btnReset">🔄 Сброс</button>
+  <button id="btnNew">✨ Следующий уровень</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const btnNew = document.getElementById('btnNew');
+
+const W = canvas.width, H = canvas.height;
+// Поднимаем опору выше, чтобы грузы не улетали за нижний край
+const CX = W / 2, CY = H - 180; 
+const PX_PER_M = 30; 
+
+let currentLevel = 1;
+let leftWeightMass = 300;
+let leftWeightDist = 2;
+let rightWeightMass = 400; 
+let rightWeightDist = 5;   
+
+let currentAngle = 0;
+let targetAngle = 0;
+let dragTarget = null; 
+let isWon = false;
+
+// ==================== ЛОГИКА УРОВНЕЙ ====================
+const LEVELS = [
+  { leftM: 200, rightM: 400 },
+  { leftM: 300, rightM: 500 },
+  { leftM: 400, rightM: 200 },
+  { leftM: 100, rightM: 800 },
+  { leftM: 600, rightM: 300 }
+];
+
+function loadLevel() {
+  let l = LEVELS[(currentLevel - 1) % LEVELS.length];
+  leftWeightMass = l.leftM;
+  rightWeightMass = l.rightM;
+  
+  leftWeightDist = Math.floor(Math.random() * 5) + 2; 
+  rightWeightDist = Math.floor(Math.random() * 5) + 2;
+
+  isWon = false;
+  currentAngle = 0;
+  targetAngle = 0;
+  dragTarget = null;
+  
+  btnNew.classList.remove('win');
+  btnNew.innerText = '✨ Следующий уровень';
+  
+  updateHUD();
+}
+
+// ==================== ФИЗИКА ====================
+function updatePhysics() {
+  let leftMoment = leftWeightMass * leftWeightDist;
+  let rightMoment = rightWeightMass * rightWeightDist;
+  
+  let diff = rightMoment - leftMoment;
+  
+  let maxDiff = 1000;
+  let normDiff = Math.max(-1, Math.min(1, diff / maxDiff));
+  targetAngle = normDiff * 20 * (Math.PI / 180); 
+  
+  currentAngle += (targetAngle - currentAngle) * 0.1;
+
+  if (Math.abs(diff) < 10 && !isWon) {
+    isWon = true;
+    btnNew.classList.add('win');
+    btnNew.innerText = '🏆 Дальше!';
+    updateHUD();
+  } else if (Math.abs(diff) >= 10) {
+    isWon = false;
+  }
+}
+
+// ==================== ОТРИСОВКА ====================
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  
+  // Земля
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillRect(0, H - 20, W, 20);
+
+  // ВОЗВЫШЕННОСТЬ (Пьедестал)
+  ctx.fillStyle = '#94a3b8';
+  ctx.beginPath();
+  ctx.moveTo(CX - 120, H - 20);
+  ctx.lineTo(CX - 60, CY + 80);
+  ctx.lineTo(CX + 60, CY + 80);
+  ctx.lineTo(CX + 120, H - 20);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Опора (треугольник)
+  ctx.fillStyle = '#475569';
+  ctx.beginPath();
+  ctx.moveTo(CX, CY);
+  ctx.lineTo(CX - 40, CY + 80);
+  ctx.lineTo(CX + 40, CY + 80);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(CX, CY);
+  ctx.rotate(currentAngle);
+
+  // Стрела (укоротил до 520px, чтобы не вылетала)
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(-260, -15, 520, 30);
+  
+  // Разметка
+  ctx.font = 'bold 22px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  for (let i = -8; i <= 8; i++) {
+    if (i === 0) continue;
+    let px = i * PX_PER_M;
+    if (Math.abs(px) < 250) {
+      ctx.beginPath();
+      ctx.moveTo(px, -15);
+      ctx.lineTo(px, 15);
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.strokeText(Math.abs(i), px, 0);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(Math.abs(i), px, 0);
+    }
+  }
+
+  // ЛЕВЫЙ ГРУЗ
+  let lx = -leftWeightDist * PX_PER_M;
+  ctx.save();
+  ctx.translate(lx, 0);
+  ctx.strokeStyle = dragTarget === 'left' ? '#0ea5e9' : '#333';
+  ctx.lineWidth = dragTarget === 'left' ? 4 : 2;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 40); ctx.stroke();
+  
+  ctx.fillStyle = dragTarget === 'left' ? '#bae6fd' : '#64748b';
+  ctx.fillRect(-25, 40, 50, 50);
+  ctx.strokeStyle = dragTarget === 'left' ? '#0284c7' : '#334155'; 
+  ctx.lineWidth = dragTarget === 'left' ? 4 : 2;
+  ctx.strokeRect(-25, 40, 50, 50);
+  
+  ctx.fillStyle = dragTarget === 'left' ? '#0369a1' : '#fff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText(leftWeightMass, 0, 65);
+  ctx.restore();
+
+  // ПРАВЫЙ ГРУЗ
+  let rx = rightWeightDist * PX_PER_M;
+  ctx.save();
+  ctx.translate(rx, 0);
+  ctx.strokeStyle = isWon ? '#22c55e' : (dragTarget === 'right' ? '#0ea5e9' : '#333');
+  ctx.lineWidth = (isWon || dragTarget === 'right') ? 4 : 2;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 40); ctx.stroke();
+  
+  ctx.fillStyle = isWon ? '#4ade80' : (dragTarget === 'right' ? '#bae6fd' : '#94a3b8');
+  ctx.fillRect(-25, 40, 50, 50);
+  ctx.strokeStyle = isWon ? '#16a34a' : (dragTarget === 'right' ? '#0284c7' : '#1e293b'); 
+  ctx.lineWidth = (isWon || dragTarget === 'right') ? 4 : 2;
+  ctx.strokeRect(-25, 40, 50, 50);
+  
+  ctx.fillStyle = isWon ? '#065f46' : (dragTarget === 'right' ? '#0369a1' : '#fff');
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText(rightWeightMass, 0, 65);
+  ctx.restore();
+
+  ctx.restore(); // Убираем вращение
+
+  // Оверлей победы
+  if (isWon) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillRect(CX - 160, 30, 320, 70);
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 4;
+    ctx.strokeRect(CX - 160, 30, 320, 70);
+    ctx.fillStyle = '#16a34a';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚖️ РАВНОВЕСИЕ!', CX, 65);
+  }
+}
+
+// ==================== ВВОД ====================
+function getMousePos(e) {
+  let rect = canvas.getBoundingClientRect();
+  let px = (e.clientX - rect.left) / rect.width * canvas.width;
+  return px;
+}
+
+canvas.addEventListener('pointerdown', (e => {
+  if (isWon) return;
+  let px = getMousePos(e);
+  
+  let lx = CX - leftWeightDist * PX_PER_M * Math.cos(currentAngle);
+  let rx = CX + rightWeightDist * PX_PER_M * Math.cos(currentAngle);
+  
+  if (Math.abs(px - lx) < 60) {
+    dragTarget = 'left';
+  } 
+  else if (Math.abs(px - rx) < 60) {
+    dragTarget = 'right';
+  }
+}));
+
+canvas.addEventListener('pointermove', (e => {
+  if (!dragTarget || isWon) return;
+  let px = getMousePos(e);
+  
+  let distPx = px - CX;
+  let distM = Math.abs(distPx) / PX_PER_M;
+  
+  if (dragTarget === 'left') {
+    leftWeightDist = Math.max(1, Math.min(8, Math.round(distM))); // Ограничил до 8 м
+  } else if (dragTarget === 'right') {
+    rightWeightDist = Math.max(1, Math.min(8, Math.round(distM)));
+  }
+  
+  updateHUD();
+}));
+
+canvas.addEventListener('pointerup', () => { dragTarget = null; });
+canvas.addEventListener('pointercancel', () => { dragTarget = null; });
+
+// ==================== HUD ====================
+function updateHUD() {
+  let leftMoment = leftWeightMass * leftWeightDist;
+  let rightMoment = rightWeightMass * rightWeightDist;
+  let diff = rightMoment - leftMoment;
+
+  let status = '';
+  let statusCls = '';
+  
+  if (isWon) {
+    status = '⚖️ Идеальный баланс!';
+    statusCls = 'ok';
+  } else if (diff > 0) {
+    status = '⬇️ Перевес справа (момент слишком велик)';
+    statusCls = 'bad';
+  } else {
+    status = '⬇️ Перевес слева (момент слишком мал)';
+    statusCls = 'bad';
+  }
+
+  hud.innerHTML = `
+    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+      <span><b>Уровень:</b> ${currentLevel}</span>
+      <span><b>Правило моментов:</b> M₁ = M₂</span>
+    </div>
+    
+    <div style="display:flex; justify-content:space-between; color:#dc2626;">
+      <span><b>Слева (M₁):</b> ${leftWeightMass} кг × ${leftWeightDist} м</span>
+      <span><b>= ${leftMoment}</b></span>
+    </div>
+    
+    <div style="display:flex; justify-content:space-between; color:#2563eb;">
+      <span><b>Справа (M₂):</b> ${rightWeightMass} кг × ${rightWeightDist} м</span>
+      <span><b>= ${rightMoment}</b></span>
+    </div>
+    
+    <div style="margin-top:8px; text-align:center;" class="${statusCls}">
+      ${status}
+    </div>
+    ${!isWon ? '<div style="font-size:12px; color:#64748b; margin-top:4px; text-align:center;">Двигайте грузы, чтобы уравнять моменты</div>' : '<div style="font-size:12px; color:#16a34a; margin-top:4px; text-align:center; font-weight:bold;">Нажмите «Дальше» для продолжения</div>'}
+  `;
+}
+
+document.getElementById('btnReset').onclick = () => { loadLevel(); };
+btnNew.onclick = () => { 
+  if (isWon) {
+    currentLevel++; 
+    loadLevel(); 
+  }
+};
+
+// ==================== ЦИКЛ ====================
+function loop() {
+  updatePhysics();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loadLevel();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
