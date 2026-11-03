@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Кольцевая гонка — Физика</title>
+<style>
+  /* СВЕТЛАЯ ТЕМА И МОБИЛЬНАЯ АДАПТАЦИЯ */
+  body {
+    margin: 0;
+    background: #f4f7f6;
+    color: #333;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    touch-action: pan-y;
+    user-select: none;
+  }
+  h1 {
+    font-size: 1.1rem;
+    margin: 10px 0;
+    color: #0056b3;
+    text-align: center;
+  }
+  
+  /* ВЕРХНЯЯ ПАНЕЛЬ (ВЫНЕСЕНА ИЗ КАНВАСА) */
+  .top-panel {
+    width: 94%;
+    max-width: 800px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+    gap: 10px;
+  }
+  
+  #hud {
+    background: #ffffff;
+    padding: 10px 14px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    flex: 1;
+  }
+  #hud b { color: #0056b3; }
+  .ok { color: #28a745; font-weight: bold; }
+  .warn { color: #ff9800; font-weight: bold; }
+  .bad { color: #dc3545; font-weight: bold; }
+  
+  #scoreBoard {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #fff;
+    background: #0056b3;
+    padding: 10px 15px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    text-align: center;
+    min-width: 90px;
+  }
+
+  /* ГОРИЗОНТАЛЬНАЯ ШКАЛА СЦЕПЛЕНИЯ */
+  .gauge-wrap {
+    width: 100%;
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    margin-top: 8px;
+    overflow: hidden;
+    position: relative;
+  }
+  #gauge-fill {
+    height: 100%;
+    width: 0%;
+    background: #10b981;
+    transition: width 0.1s, background-color 0.1s;
+  }
+
+  /* КАНВАС */
+  #wrap {
+    position: relative;
+    width: 94%;
+    max-width: 800px;
+    margin-bottom: 10px;
+  }
+  canvas {
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    display: block;
+    width: 100%;
+    height: auto;
+    touch-action: none;
+  }
+
+  #msg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1rem;
+    font-weight: bold;
+    text-align: center;
+    line-height: 1.5;
+    background: rgba(255,255,255,0.95);
+    color: #333;
+    padding: 15px 20px;
+    border-radius: 12px;
+    display: none;
+    border: 2px solid #0056b3;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    width: 85%;
+    max-width: 350px;
+    z-index: 10;
+  }
+
+  /* ПАНЕЛЬ УПРАВЛЕНИЯ (ПОЛЗУНКИ) */
+  .panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* Два столбца на широких экранах */
+    gap: 10px;
+    width: 94%;
+    max-width: 800px;
+    margin-bottom: 10px;
+  }
+  @media (max-width: 500px) {
+    .panel { grid-template-columns: 1fr; } /* Один столбец на узких */
+  }
+  .item {
+    background: #ffffff;
+    padding: 8px 12px;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+  .item label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 5px;
+    color: #444;
+  }
+  .item input[type=range] {
+    width: 100%;
+    accent-color: #0056b3;
+  }
+  
+  /* КНОПКИ УПРАВЛЕНИЯ */
+  .controls {
+    display: flex;
+    gap: 10px;
+    width: 94%;
+    max-width: 800px;
+    margin-bottom: 20px;
+  }
+  .controls button {
+    flex: 1;
+    padding: 16px 10px;
+    border: 0;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transition: transform 0.1s, background 0.1s;
+    touch-action: manipulation;
+  }
+  .controls button:active {
+    transform: scale(0.95);
+  }
+  #btnReset { background: #e2e8f0; color: #475569; }
+  #btnBrake { background: #fecaca; color: #991b1b; }
+  #btnGas { background: #bbf7d0; color: #166534; }
+</style>
+</head>
+<body>
+<h1>🏎 Кольцевая гонка</h1>
+
+<!-- ВЕРХНЕЕ ТАБЛО -->
+<div class="top-panel">
+  <div id="hud">
+    <!-- Данные заполняются в JS -->
+    <div class="gauge-wrap"><div id="gauge-fill"></div></div>
+  </div>
+  <div id="scoreBoard">Очки: 0</div>
+</div>
+
+<!-- ИГРОВОЕ ПОЛЕ -->
+<div id="wrap">
+  <!-- Уменьшил разрешение под мобилки: 800x600 (более квадратное) -->
+  <canvas id="c" width="800" height="600"></canvas>
+  <div id="msg"></div>
+</div>
+
+<!-- НАСТРОЙКИ -->
+<div class="panel">
+  <div class="item">
+    <label>Радиус трассы r <span id="vr">30 м</span></label>
+    <input type="range" id="rSlider" min="10" max="50" step="1" value="30">
+  </div>
+  <div class="item">
+    <label>Коэффициент трения μ <span id="vmu">0.60</span></label>
+    <input type="range" id="muSlider" min="0.10" max="1.00" step="0.05" value="0.6">
+  </div>
+  <div class="item">
+    <label>Масса машины m <span id="vm">1200 кг</span></label>
+    <input type="range" id="mSlider" min="500" max="2500" step="100" value="1200">
+  </div>
+  <div class="item">
+    <label>Скорость v <span id="vv">15.0 м/с</span></label>
+    <input type="range" id="vSlider" min="0" max="45" step="0.5" value="15">
+  </div>
+</div>
+
+<!-- КНОПКИ -->
+<div class="controls">
+  <button id="btnReset">🔄 Сброс</button>
+  <button id="btnBrake">🛑 Тормоз</button>
+  <button id="btnGas">🚀 Газ</button>
+</div>
+
+<script>
+// ==================== ПАРАМЕТРЫ ====================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const msgEl = document.getElementById('msg');
+const scoreEl = document.getElementById('scoreBoard');
+const gaugeFill = document.getElementById('gauge-fill');
+
+// Новые размеры под мобильные
+const W = canvas.width, H = canvas.height;
+const CX = W / 2, CY = H / 2;
+
+const G = 9.8;                 
+const PX_PER_M = 4.0;          
+const ROAD_HALF = 45;          
+const LAPS_TO_WIN = 3;
+
+// ==================== СОСТОЯНИЕ ====================
+let r = 30;          
+let mu = 0.6;
+let mass = 1200;     
+let v = 15;          
+
+let thetaCum = -Math.PI / 2;   
+let rVisPx = null;             
+let skid = false;
+let crash = false;
+let won = false;
+let running = false;
+let elapsed = 0;
+let bestTime = null;
+
+// Очки
+let score = 0;
+let lastLap = 0;
+let tempMsgTimeout = null;
+
+const keys = { up: false, down: false };
+
+// ==================== СБРОС / СТАРТ ====================
+function resetRace() {
+  thetaCum = -Math.PI / 2;
+  rVisPx = r * PX_PER_M;
+  skid = false;
+  crash = false;
+  won = false;
+  running = true;
+  elapsed = 0;
+  score = 0;
+  lastLap = 0;
+  scoreEl.innerText = `Очки: ${score}`;
+  msgEl.style.display = 'none';
+  if(tempMsgTimeout) clearTimeout(tempMsgTimeout);
+}
+
+function showTempMessage(text) {
+  msgEl.innerHTML = text;
+  msgEl.style.display = 'block';
+  msgEl.style.fontSize = '1rem';
+  msgEl.style.border = '2px solid #28a745';
+  if(tempMsgTimeout) clearTimeout(tempMsgTimeout);
+  tempMsgTimeout = setTimeout(() => {
+    msgEl.style.display = 'none';
+  }, 2000);
+}
+
+// ==================== ФИЗИКА ====================
+function update(dt) {
+  if (!running) return;
+  elapsed += dt;
+
+  const rPx = r * PX_PER_M;
+  if (rVisPx === null) rVisPx = rPx;
+
+  // газ / тормоз
+  if (keys.up)   v = Math.min(45, v + 22 * dt);
+  if (keys.down) v = Math.max(0, v - 22 * dt);
+
+  // ключевая физика
+  const aC   = (v * v) / r;      
+  const aMax = mu * G;           
+
+  if (aC > aMax) {
+    skid = true;
+    const over = aC / aMax - 1;                 
+    rVisPx += (35 + 150 * Math.min(over, 2)) * dt;  
+    if (rVisPx > rPx + ROAD_HALF) {             
+      crash = true;
+      running = false;
+      showMessage(
+        `💥 Вылет с трассы!<br>
+         <span style="font-size:13px;font-weight:normal">
+         Нужно было a<sub>цс</sub> = v²/r = ${aC.toFixed(1)} м/с²,<br>
+         а трение даёт максимум μg = ${aMax.toFixed(1)} м/с².<br>
+         Сбрось скорость или увеличь радиус.</span>`);
+    }
+  } else {
+    skid = false;
+    rVisPx += (rPx - rVisPx) * Math.min(1, 4 * dt);
+  }
+
+  // движение по окружности
+  const omega = v / r;           
+  thetaCum += omega * dt;
+
+  const laps = Math.floor((thetaCum + Math.PI / 2) / (2 * Math.PI));
+  
+  // Проверка на завершение круга
+  if (laps > lastLap && !crash && !won) {
+    lastLap = laps;
+    let vMax = Math.sqrt(mu * G * r);
+    score += 100;
+    
+    if (v >= vMax * 0.95) {
+      score += 150;
+      showTempMessage("🔥 Круг пройден!<br>+100 очков<br><span style='color:#28a745'>Бонус за макс. скорость: +150!</span>");
+    } else {
+      showTempMessage("✅ Круг пройден!<br>+100 очков");
+    }
+    scoreEl.innerText = `Очки: ${score}`;
+  }
+
+  // Проверка на победу
+  if (laps >= LAPS_TO_WIN && !won) {
+    won = true;
+    running = false;
+    if (bestTime === null || elapsed < bestTime) bestTime = elapsed;
+    showMessage(
+      `🏁 Финиш! Время: ${elapsed.toFixed(2)} с<br>
+       <span style="color:#0056b3; font-size: 1.2rem;">Всего очков: ${score}</span><br><br>
+       <span style="font-size:13px;font-weight:normal">
+       a<sub>цс</sub> = ${aC.toFixed(1)} м/с² &lt; μg = ${aMax.toFixed(1)} м/с²<br>
+       ω = ${omega.toFixed(3)} рад/с, T = ${(2*Math.PI*r/v).toFixed(2)} с</span>`);
+  }
+
+  // Синхронизация ползунка скорости
+  vSlider.value = v.toFixed(1);
+  document.getElementById('vv').textContent = v.toFixed(1) + ' м/с';
+}
+
+function showMessage(html) {
+  msgEl.innerHTML = html + '<br><br><span style="font-size:12px;font-weight:normal;opacity:.7">Нажмите «Сброс»</span>';
+  msgEl.style.display = 'block';
+  msgEl.style.border = '2px solid #dc3545';
+}
+
+// ==================== ОТРИСОВКА ====================
+function drawArrow(x, y, dx, dy, color, width) {
+  const len = Math.hypot(dx, dy);
+  if (len < 3) return;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = width || 2.5;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + dx, y + dy);
+  ctx.stroke();
+  const a = Math.atan2(dy, dx);
+  ctx.beginPath();
+  ctx.moveTo(x + dx, y + dy);
+  ctx.lineTo(x + dx - 10 * Math.cos(a - 0.4), y + dy - 10 * Math.sin(a - 0.4));
+  ctx.lineTo(x + dx - 10 * Math.cos(a + 0.4), y + dy - 10 * Math.sin(a + 0.4));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  const rPx = r * PX_PER_M;
+  const rCar = rVisPx === null ? rPx : rVisPx;
+
+  // ---- трасса ----
+  ctx.beginPath();
+  ctx.arc(CX, CY, rPx + ROAD_HALF, 0, Math.PI * 2);
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, rPx - ROAD_HALF, 0, Math.PI * 2);
+  ctx.fillStyle = '#dcfce7';
+  ctx.fill();
+
+  // обочины
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(CX, CY, rPx + ROAD_HALF, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(CX, CY, rPx - ROAD_HALF, 0, Math.PI * 2); ctx.stroke();
+
+  // осевая
+  ctx.strokeStyle = 'rgba(255,255,255,.8)';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([15, 15]);
+  ctx.beginPath(); ctx.arc(CX, CY, rPx, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // стартовая линия
+  const START = -Math.PI / 2;
+  ctx.lineWidth = 8;
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(CX + Math.cos(START) * (rPx + i * (ROAD_HALF/2)),
+               CY + Math.sin(START) * (rPx + i * (ROAD_HALF/2)));
+    ctx.lineTo(CX + Math.cos(START) * (rPx + (i + 0.5) * (ROAD_HALF/2)),
+               CY + Math.sin(START) * (rPx + (i + 0.5) * (ROAD_HALF/2)));
+    ctx.strokeStyle = i % 2 ? '#000' : '#fff';
+    ctx.stroke();
+  }
+
+  // линия к центру
+  const carX = CX + Math.cos(thetaCum) * rCar;
+  const carY = CY + Math.sin(thetaCum) * rCar;
+  
+  ctx.strokeStyle = 'rgba(148,163,184,.5)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath(); ctx.moveTo(CX, CY); ctx.lineTo(carX, carY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ---- машина ----
+  const tangentAngle = thetaCum + Math.PI / 2;
+  ctx.save();
+  ctx.translate(carX, carY);
+  ctx.rotate(tangentAngle);
+
+  if (skid) {
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(-14 - i * 9, (i % 2 ? 5 : -5), 4 + i, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,120,80,${0.5 - i * 0.15})`;
+      ctx.fill();
+    }
+  }
+
+  const bodyColor = skid ? '#ef4444' : '#0056b3';
+  ctx.fillStyle = bodyColor;
+  ctx.fillRect(-16, -9, 32, 18);          
+  ctx.beginPath();
+  ctx.moveTo(16, -9); ctx.lineTo(24, 0); ctx.lineTo(16, 9);
+  ctx.closePath();
+  ctx.fill();                             
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(-8, -6, 12, 12);            
+  ctx.restore();
+
+  // ---- векторы ----
+  const speedScale = 5.5;
+  const tx = -Math.sin(thetaCum), ty = Math.cos(thetaCum);
+  drawArrow(carX, carY, tx * v * speedScale, ty * v * speedScale, '#10b981', 3); // Скорость
+
+  const accScale = 8;
+  const aC = v * v / r;
+  drawArrow(carX, carY,
+            (-Math.cos(thetaCum)) * aC * accScale,
+            (-Math.sin(thetaCum)) * aC * accScale,
+            '#ef4444', 3); // Центростремительное
+
+  // ---- HUD ----
+  const aMax = mu * G;
+  const ratio = aC / aMax;
+  const vMax = Math.sqrt(mu * G * r);
+  const laps = Math.floor((thetaCum + Math.PI / 2) / (2 * Math.PI));
+  const omega = v / r;
+
+  let status, statusCls;
+  if (crash)      { status = '💥 вылет'; statusCls = 'bad'; }
+  else if (won)   { status = '🏁 финиш!'; statusCls = 'ok'; }
+  else if (ratio > 1)   { status = '⚠ снос наружу!'; statusCls = 'bad'; }
+  else if (ratio > 0.85){ status = '⚠ на пределе'; statusCls = 'warn'; }
+  else            { status = '✓ держит трассу'; statusCls = 'ok'; }
+
+  hud.innerHTML = `
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+      <span><b>v</b> = ${v.toFixed(1)} м/с</span>
+      <span><b>r</b> = ${r} м</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+      <span><b>a<sub>цс</sub></b> = ${aC.toFixed(1)}</span>
+      <span><b>a<sub>max</sub></b> = ${aMax.toFixed(1)}</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+      <span><b>v<sub>max</sub></b> = ${vMax.toFixed(1)}</span>
+      <span><b>Круги:</b> ${Math.max(0, Math.min(laps, LAPS_TO_WIN))}/3</span>
+    </div>
+    <div class="${statusCls}" style="text-align:center; font-size:12px;">${status}</div>
+    <!-- Шкала сцепления -->
+    <div class="gauge-wrap" style="margin-top:8px;">
+      <div id="gauge-fill"></div>
+    </div>
+  `;
+
+  // Обновляем HTML-шкалу сцепления
+  const gaugeEl = document.getElementById('gauge-fill');
+  if (gaugeEl) {
+    const filled = Math.min(100, ratio * 100);
+    gaugeEl.style.width = filled + '%';
+    gaugeEl.style.background = ratio > 1 ? '#ef4444' : ratio > 0.85 ? '#f59e0b' : '#10b981';
+  }
+}
+
+// ==================== ВВОД ====================
+const vSlider = document.getElementById('vSlider');
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { keys.up = true; e.preventDefault(); }
+  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { keys.down = true; e.preventDefault(); }
+  if (e.key === 'r' || e.key === 'R') resetRace();
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = false;
+  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = false;
+});
+
+// Кнопки для телефона
+const btnGas = document.getElementById('btnGas');
+const btnBrake = document.getElementById('btnBrake');
+
+btnGas.addEventListener('touchstart', (e) => { e.preventDefault(); keys.up = true; });
+btnGas.addEventListener('touchend', (e) => { e.preventDefault(); keys.up = false; });
+btnGas.addEventListener('mousedown', () => keys.up = true);
+btnGas.addEventListener('mouseup', () => keys.up = false);
+btnGas.addEventListener('mouseleave', () => keys.up = false);
+
+btnBrake.addEventListener('touchstart', (e) => { e.preventDefault(); keys.down = true; });
+btnBrake.addEventListener('touchend', (e) => { e.preventDefault(); keys.down = false; });
+btnBrake.addEventListener('mousedown', () => keys.down = true);
+btnBrake.addEventListener('mouseup', () => keys.down = false);
+btnBrake.addEventListener('mouseleave', () => keys.down = false);
+
+// Ползунки
+document.getElementById('rSlider').addEventListener('input', e => {
+  r = parseFloat(e.target.value);
+  document.getElementById('vr').textContent = r + ' м';
+  resetRace();
+});
+document.getElementById('muSlider').addEventListener('input', e => {
+  mu = parseFloat(e.target.value);
+  document.getElementById('vmu').textContent = mu.toFixed(2);
+  resetRace();
+});
+document.getElementById('mSlider').addEventListener('input', e => {
+  mass = parseFloat(e.target.value);
+  document.getElementById('vm').textContent = mass + ' кг';
+});
+vSlider.addEventListener('input', e => {
+  v = parseFloat(e.target.value);
+  document.getElementById('vv').textContent = v.toFixed(1) + ' м/с';
+});
+document.getElementById('btnReset').addEventListener('click', resetRace);
+
+// ==================== ЦИКЛ ====================
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resetRace();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
