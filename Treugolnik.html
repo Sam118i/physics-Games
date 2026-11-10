@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Площадь треугольника = ½ · a · h</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #eef2f7;
+    color: #0f172a;
+    overflow: hidden;
+  }
+  .app { display: flex; height: 100dvh; }
+  .stage { flex: 1 1 auto; position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: default; }
+  .panel {
+    width: 310px; flex: 0 0 auto;
+    background: #fff;
+    border-left: 1px solid #e2e8f0;
+    padding: 22px 20px;
+    overflow-y: auto;
+  }
+  .panel h1 { font-size: 18px; margin: 0 0 4px; }
+  .panel .sub { margin: 0 0 18px; font-size: 14px; color: #64748b; }
+  .opt {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid #e2e8f0; border-radius: 10px;
+    cursor: pointer; user-select: none; font-size: 14px;
+    transition: background .15s, border-color .15s;
+  }
+  .opt:hover { background: #f8fafc; border-color: #cbd5e1; }
+  .opt input { width: 17px; height: 17px; accent-color: #2563eb; cursor: pointer; }
+  button {
+    width: 100%; margin: 10px 0 18px; padding: 10px 12px;
+    border: 1px solid #cbd5e1; border-radius: 10px;
+    background: #f8fafc; font: inherit; font-size: 14px;
+    cursor: pointer; color: #0f172a;
+  }
+  button:hover { background: #f1f5f9; }
+  .readout { border-top: 1px solid #e2e8f0; padding-top: 14px; font-size: 14px; }
+  .row { display: flex; justify-content: space-between; padding: 5px 0; color: #475569; }
+  .row b { color: #0f172a; font-variant-numeric: tabular-nums; }
+  .row.total {
+    margin-top: 8px; padding-top: 10px; border-top: 1px dashed #e2e8f0;
+    font-size: 15px;
+  }
+  .row.total b { color: #2563eb; font-size: 18px; }
+  .hint { margin: 16px 0 0; font-size: 13px; color: #64748b; line-height: 1.5; }
+  .hint b { color: #0f172a; }
+  @media (max-width: 760px) {
+    .app { flex-direction: column; }
+    .panel { width: 100%; border-left: none; border-top: 1px solid #e2e8f0; max-height: 46dvh; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage">
+    <canvas id="cv"></canvas>
+  </div>
+  <aside class="panel">
+    <h1>Площадь треугольника</h1>
+    <p class="sub">S = ½ · a · h</p>
+
+    <label class="opt">
+      <input type="checkbox" id="optRects">
+      <span>Прямоугольники (a × h)</span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="optMirror">
+      <span>«Вторые половины»</span>
+    </label>
+
+    <button id="reset">Сбросить</button>
+
+    <div class="readout">
+      <div class="row"><span>a (основание)</span><b id="ra">—</b></div>
+      <div class="row"><span>h (высота)</span><b id="rh">—</b></div>
+      <div class="row"><span>AH</span><b id="rah">—</b></div>
+      <div class="row"><span>HB</span><b id="rhb">—</b></div>
+      <div class="row total"><span>S = ½·a·h</span><b id="rs">—</b></div>
+    </div>
+
+    <p class="hint">
+      Тяните точки <b>A</b>, <b>B</b> и <b>C</b>.<br>
+      Высота делит треугольник на два прямоугольных.
+      Каждый — ровно половина своего прямоугольника.
+    </p>
+  </aside>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const WORLD = { w: 900, h: 560 };
+  const U = 50;              // 1 «единица» = 50 пикселей мира
+  const BASE_Y = 450;
+  const HIT = 30;            // радиус захвата вершины
+
+  let cw = 0, ch = 0, dpr = 1;
+  const view = { s: 1, ox: 0, oy: 0 };
+
+  const state = {
+    baseY: BASE_Y,
+    A: { x: 200, y: BASE_Y },
+    B: { x: 700, y: BASE_Y },
+    C: { x: 400, y: 200 },
+    fill: 0, fillTarget: 0,
+    rot: 0,  rotTarget: 0,
+    drag: null
+  };
+
+  const COL = {
+    left:      '#ef4444',
+    leftRect:  'rgba(239,68,68,0.13)',
+    leftRectS: 'rgba(239,68,68,0.55)',
+    leftTri:   'rgba(239,68,68,0.30)',
+    leftFlip:  'rgba(239,68,68,0.45)',
+    right:      '#10b981',
+    rightRect:  'rgba(16,185,129,0.13)',
+    rightRectS: 'rgba(16,185,129,0.55)',
+    rightTri:   'rgba(16,185,129,0.30)',
+    rightFlip:  'rgba(16,185,129,0.45)',
+    ink:   '#1e293b',
+    height:'#475569',
+    muted: '#94a3b8'
+  };
+
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  /* ---------- геометрия / вид ---------- */
+
+  function resize() {
+    const r = cv.getBoundingClientRect();
+    cw = Math.max(1, r.width);
+    ch = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width  = Math.round(cw * dpr);
+    cv.height = Math.round(ch * dpr);
+
+    const s = Math.min(cw / WORLD.w, ch / WORLD.h);
+    view.s  = s;
+    view.ox = (cw - WORLD.w * s) / 2;
+    view.oy = (ch - WORLD.h * s) / 2;
+
+    draw();
+  }
+
+  function toWorld(clientX, clientY) {
+    const r = cv.getBoundingClientRect();
+    return {
+      x: (clientX - r.left - view.ox) / view.s,
+      y: (clientY - r.top  - view.oy) / view.s
+    };
+  }
+
+  function rotPt(p, c, a) {
+    const dx = p.x - c.x, dy = p.y - c.y;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    return { x: c.x + dx * ca - dy * sa, y: c.y + dx * sa + dy * ca };
+  }
+
+  /* ---------- отрисовка ---------- */
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.save();
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(view.s, view.s);
+
+    drawGrid();
+
+    const A = state.A, B = state.B, C = state.C, baseY = state.baseY;
+    const Hx = C.x;
+    const Hp = { x: Hx, y: baseY };
+    const hFull = baseY - C.y;
+    const wL = Hx - A.x;
+    const wR = B.x - Hx;
+
+    /* 1. Прямоугольники с анимацией «заливки» снизу вверх */
+    if (state.fill > 0.002) {
+      const hh  = hFull * state.fill;
+      const top = baseY - hh;
+
+      if (wL > 1) {
+        ctx.fillStyle = COL.leftRect;
+        ctx.fillRect(A.x, top, wL, hh);
+        ctx.strokeStyle = COL.leftRectS;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([7, 6]);
+        ctx.strokeRect(A.x, top, wL, hh);
+        ctx.setLineDash([]);
+      }
+      if (wR > 1) {
+        ctx.fillStyle = COL.rightRect;
+        ctx.fillRect(Hx, top, wR, hh);
+        ctx.strokeStyle = COL.rightRectS;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([7, 6]);
+        ctx.strokeRect(Hx, top, wR, hh);
+        ctx.setLineDash([]);
+      }
+    }
+
+    /* 2. «Вторые половины»: поворот на 180° вокруг центра прямоугольника */
+    if (state.rot > 0.002) {
+      const ang = Math.PI * state.rot;
+
+      if (wL > 1) {
+        const c = { x: (A.x + Hx) / 2, y: (baseY + C.y) / 2 };
+        const p1 = rotPt(A,  c, ang);
+        const p2 = rotPt(Hp, c, ang);
+        const p3 = rotPt(C,  c, ang);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fillStyle = COL.leftFlip;
+        ctx.fill();
+        ctx.strokeStyle = COL.left;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (wR > 1) {
+        const c = { x: (Hx + B.x) / 2, y: (baseY + C.y) / 2 };
+        const p1 = rotPt(Hp, c, ang);
+        const p2 = rotPt(B,  c, ang);
+        const p3 = rotPt(C,  c, ang);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fillStyle = COL.rightFlip;
+        ctx.fill();
+        ctx.strokeStyle = COL.right;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    /* 3. Два прямоугольных треугольника */
+    if (wL > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(A.x, baseY);
+      ctx.lineTo(Hx, baseY);
+      ctx.lineTo(Hx, C.y);
+      ctx.closePath();
+      ctx.fillStyle = COL.leftTri;
+      ctx.fill();
+    }
+    if (wR > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(Hx, baseY);
+      ctx.lineTo(B.x, baseY);
+      ctx.lineTo(Hx, C.y);
+      ctx.closePath();
+      ctx.fillStyle = COL.rightTri;
+      ctx.fill();
+    }
+
+    /* 4. Контур исходного треугольника */
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.lineTo(C.x, C.y);
+    ctx.closePath();
+    ctx.strokeStyle = COL.ink;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    /* 5. Высота */
+    ctx.beginPath();
+    ctx.moveTo(Hx, baseY);
+    ctx.lineTo(Hx, C.y);
+    ctx.strokeStyle = COL.height;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([9, 7]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    /* 6. Прямые углы при H */
+    const rs = Math.min(16, wL * 0.5, wR * 0.5);
+    ctx.strokeStyle = COL.muted;
+    ctx.lineWidth = 1.6;
+    if (wL > rs && rs > 3) {
+      ctx.beginPath();
+      ctx.moveTo(Hx - rs, baseY);
+      ctx.lineTo(Hx - rs, baseY - rs);
+      ctx.lineTo(Hx,      baseY - rs);
+      ctx.stroke();
+    }
+    if (wR > rs && rs > 3) {
+      ctx.beginPath();
+      ctx.moveTo(Hx + rs, baseY);
+      ctx.lineTo(Hx + rs, baseY - rs);
+      ctx.lineTo(Hx,      baseY - rs);
+      ctx.stroke();
+    }
+
+    /* 7. Подписи */
+    label('h', Hx + 16, (baseY + C.y) / 2, COL.height, 17);
+    label('A', A.x - 18, baseY + 22, COL.ink);
+    label('B', B.x + 18, baseY + 22, COL.ink);
+    label('C', C.x, C.y - 22, COL.ink);
+    label('H', Hx, baseY + 22, '#64748b', 16);
+
+    /* 8. Маркеры вершин */
+    handle(A, '#2563eb', state.drag === 'A');
+    handle(B, '#2563eb', state.drag === 'B');
+    handle(C, '#2563eb', state.drag === 'C');
+
+    ctx.restore();
+  }
+
+  function drawGrid() {
+    ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= WORLD.w; x += U) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, WORLD.h);
+    }
+    for (let y = 0; y <= WORLD.h; y += U) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(WORLD.w, y);
+    }
+    ctx.stroke();
+  }
+
+  function label(text, x, y, color, size) {
+    size = size || 19;
+    ctx.font = '700 ' + size + 'px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(248,250,252,0.96)';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+  }
+
+  function handle(p, color, active) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, active ? 11 : 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+  }
+
+  /* ---------- анимация ---------- */
+
+  function tick() {
+    let dirty = false;
+
+    if (Math.abs(state.fill - state.fillTarget) > 0.0005) {
+      state.fill += (state.fillTarget - state.fill) * 0.16;
+      if (Math.abs(state.fill - state.fillTarget) < 0.004) state.fill = state.fillTarget;
+      dirty = true;
+    }
+    if (Math.abs(state.rot - state.rotTarget) > 0.0005) {
+      state.rot += (state.rotTarget - state.rot) * 0.11;
+      if (Math.abs(state.rot - state.rotTarget) < 0.004) state.rot = state.rotTarget;
+      dirty = true;
+    }
+    if (dirty) draw();
+
+    requestAnimationFrame(tick);
+  }
+
+  /* ---------- данные ---------- */
+
+  function updateReadout() {
+    const a  = (state.B.x - state.A.x) / U;
+    const h  = (state.baseY - state.C.y) / U;
+    const ah = (state.C.x - state.A.x) / U;
+    const hb = (state.B.x - state.C.x) / U;
+    document.getElementById('ra').textContent  = a.toFixed(1);
+    document.getElementById('rh').textContent  = h.toFixed(1);
+    document.getElementById('rah').textContent = ah.toFixed(1);
+    document.getElementById('rhb').textContent = hb.toFixed(1);
+    document.getElementById('rs').textContent  = (0.5 * a * h).toFixed(1);
+  }
+
+  /* ---------- взаимодействие ---------- */
+
+  cv.addEventListener('pointerdown', function (e) {
+    const p = toWorld(e.clientX, e.clientY);
+    let best = null, bd = HIT;
+    ['A', 'B', 'C'].forEach(function (k) {
+      const d = Math.hypot(state[k].x - p.x, state[k].y - p.y);
+      if (d < bd) { bd = d; best = k; }
+    });
+    if (best) {
+      state.drag = best;
+      cv.setPointerCapture(e.pointerId);
+      cv.style.cursor = 'grabbing';
+      e.preventDefault();
+      draw();
+    }
+  });
+
+  cv.addEventListener('pointermove', function (e) {
+    const p = toWorld(e.clientX, e.clientY);
+
+    if (!state.drag) {
+      let near = false;
+      ['A', 'B', 'C'].forEach(function (k) {
+        if (Math.hypot(state[k].x - p.x, state[k].y - p.y) < HIT) near = true;
+      });
+      cv.style.cursor = near ? 'grab' : 'default';
+      return;
+    }
+
+    const k = state.drag;
+    if (k === 'A') {
+      state.A.x = clamp(p.x, 40, state.C.x);
+    } else if (k === 'B') {
+      state.B.x = clamp(p.x, state.C.x, WORLD.w - 40);
+    } else {
+      state.C.x = clamp(p.x, state.A.x, state.B.x);
+      state.C.y = clamp(p.y, 60, state.baseY - 60);
+    }
+
+    updateReadout();
+    draw();
+  });
+
+  function endDrag() {
+    if (!state.drag) return;
+    state.drag = null;
+    cv.style.cursor = 'default';
+    draw();
+  }
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
+  cv.addEventListener('pointerleave', function () {
+    if (!state.drag) cv.style.cursor = 'default';
+  });
+
+  /* ---------- панель ---------- */
+
+  document.getElementById('optRects').addEventListener('change', function (e) {
+    state.fillTarget = e.target.checked ? 1 : 0;
+  });
+
+  document.getElementById('optMirror').addEventListener('change', function (e) {
+    state.rotTarget = e.target.checked ? 1 : 0;
+    if (e.target.checked) {
+      const r = document.getElementById('optRects');
+      if (!r.checked) { r.checked = true; state.fillTarget = 1; }
+    }
+  });
+
+  document.getElementById('reset').addEventListener('click', function () {
+    state.A.x = 200; state.B.x = 700;
+    state.C.x = 400; state.C.y = 200;
+    updateReadout();
+    draw();
+  });
+
+  /* ---------- старт ---------- */
+
+  new ResizeObserver(resize).observe(cv.parentElement);
+  resize();
+  updateReadout();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
