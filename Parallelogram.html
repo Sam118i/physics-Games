@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Площадь параллелограмма = a · h</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #eef2f7;
+    color: #0f172a;
+    overflow: hidden;
+  }
+  .app { display: flex; height: 100dvh; }
+  .stage { flex: 1 1 auto; position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: default; }
+  .panel {
+    width: 310px; flex: 0 0 auto;
+    background: #fff;
+    border-left: 1px solid #e2e8f0;
+    padding: 22px 20px;
+    overflow-y: auto;
+  }
+  .panel h1 { font-size: 18px; margin: 0 0 4px; }
+  .panel .sub { margin: 0 0 18px; font-size: 14px; color: #64748b; }
+  .opt {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid #e2e8f0; border-radius: 10px;
+    cursor: pointer; user-select: none; font-size: 14px;
+    transition: background .15s, border-color .15s;
+  }
+  .opt:hover { background: #f8fafc; border-color: #cbd5e1; }
+  .opt input { width: 17px; height: 17px; accent-color: #10b981; cursor: pointer; }
+  button {
+    width: 100%; margin: 10px 0 18px; padding: 10px 12px;
+    border: 1px solid #cbd5e1; border-radius: 10px;
+    background: #f8fafc; font: inherit; font-size: 14px;
+    cursor: pointer; color: #0f172a;
+  }
+  button:hover { background: #f1f5f9; }
+  .readout { border-top: 1px solid #e2e8f0; padding-top: 14px; font-size: 14px; }
+  .row { display: flex; justify-content: space-between; padding: 5px 0; color: #475569; }
+  .row b { color: #0f172a; font-variant-numeric: tabular-nums; }
+  .row.total {
+    margin-top: 8px; padding-top: 10px; border-top: 1px dashed #e2e8f0;
+    font-size: 15px;
+  }
+  .row.total b { color: #2563eb; font-size: 18px; }
+  .hint { margin: 16px 0 0; font-size: 13px; color: #64748b; line-height: 1.5; }
+  .hint b { color: #0f172a; }
+  @media (max-width: 760px) {
+    .app { flex-direction: column; }
+    .panel { width: 100%; border-left: none; border-top: 1px solid #e2e8f0; max-height: 46dvh; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage">
+    <canvas id="cv"></canvas>
+  </div>
+  <aside class="panel">
+    <h1>Площадь параллелограмма</h1>
+    <p class="sub">S = a · h</p>
+
+    <label class="opt">
+      <input type="checkbox" id="optRect">
+      <span>Прямоугольник a × h</span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" id="optMove">
+      <span>Переложить треугольник</span>
+    </label>
+
+    <button id="reset">Сбросить</button>
+
+    <div class="readout">
+      <div class="row"><span>a (нижнее основание)</span><b id="ra">—</b></div>
+      <div class="row"><span>b (верхнее основание)</span><b id="rb">—</b></div>
+      <div class="row"><span>h (высота)</span><b id="rh">—</b></div>
+      <div class="row total"><span>S = a · h</span><b id="rs">—</b></div>
+    </div>
+
+    <p class="hint">
+      Тяните вершины <b>A</b>, <b>B</b>, <b>C</b> и <b>D</b>.<br>
+      Высоты опущены из вершин верхнего основания.
+      Переставив крайний треугольник, мы получим прямоугольник со сторонами <b>a</b> и <b>h</b>.
+    </p>
+  </aside>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const WORLD = { w: 1000, h: 620 };
+  const U = 50;            // 1 «единица» = 50 пикселей мира
+  const BASE_Y = 520;
+  const HIT = 30;          // радиус захвата вершины
+
+  let cw = 0, ch = 0, dpr = 1;
+  const view = { s: 1, ox: 0, oy: 0 };
+
+  const state = {
+    baseY: BASE_Y,
+    A: { x: 200, y: BASE_Y },   // нижний левый
+    B: { x: 600, y: BASE_Y },   // нижний правый
+    D: { x: 300, y: 270 },      // верхний левый
+    C: { x: 700, y: 270 },      // верхний правый
+    fill: 0, fillTarget: 0,     // Анимация заливки прямоугольника
+    move: 0, moveTarget: 0,     // Анимация перекладывания треугольника
+    drag: null
+  };
+
+  const COL = {
+    paraBg:   'rgba(148,163,184,0.10)',
+    paraS:    '#1e293b',
+    rect:     'rgba(16,185,129,0.15)',
+    rectS:    'rgba(16,185,129,0.60)',
+    move:     'rgba(217,119,6,0.35)',
+    moveS:    '#b45309',
+    ink:      '#1e293b',
+    height:   '#475569',
+    muted:    '#94a3b8'
+  };
+
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  /* ---------- вид ---------- */
+
+  function resize() {
+    const r = cv.getBoundingClientRect();
+    cw = Math.max(1, r.width);
+    ch = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width  = Math.round(cw * dpr);
+    cv.height = Math.round(ch * dpr);
+
+    const s = Math.min(cw / WORLD.w, ch / WORLD.h);
+    view.s  = s;
+    view.ox = (cw - WORLD.w * s) / 2;
+    view.oy = (ch - WORLD.h * s) / 2;
+
+    draw();
+  }
+
+  function toWorld(clientX, clientY) {
+    const r = cv.getBoundingClientRect();
+    return {
+      x: (clientX - r.left - view.ox) / view.s,
+      y: (clientY - r.top  - view.oy) / view.s
+    };
+  }
+
+  /* ---------- отрисовка ---------- */
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.save();
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(view.s, view.s);
+
+    drawGrid();
+
+    const A = state.A, B = state.B, C = state.C, D = state.D;
+    const baseY = state.baseY;
+    const topY  = D.y;
+    const h = baseY - topY;
+    const a = B.x - A.x;
+
+    // Основания высот (проекции D и C на нижнее основание)
+    const Hd = { x: D.x, y: baseY };
+    const Hc = { x: C.x, y: baseY };
+
+    /* 1. Фон параллелограмма */
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.lineTo(C.x, C.y);
+    ctx.lineTo(D.x, D.y);
+    ctx.closePath();
+    ctx.fillStyle = COL.paraBg;
+    ctx.fill();
+
+    /* 2. Центральный прямоугольник a × h */
+    if (state.fill > 0.002) {
+      const rh = h * state.fill;
+      const ry = baseY - rh;
+
+      ctx.fillStyle = COL.rect;
+      ctx.fillRect(Hd.x, ry, a, rh);
+      
+      ctx.strokeStyle = COL.rectS;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.strokeRect(Hd.x, ry, a, rh);
+      ctx.setLineDash([]);
+
+      if (state.fill > 0.7) {
+        ctx.globalAlpha = Math.min(1, (state.fill - 0.7) / 0.25);
+        label('a × h', Hd.x + a / 2, baseY - 34, COL.rectS, 20);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    /* 3. Анимация перекладывания правого треугольника влево */
+    if (state.move > 0.002) {
+      // Вектор перемещения: от B к A
+      const dx = (A.x - B.x) * state.move;
+
+      ctx.beginPath();
+      ctx.moveTo(B.x + dx, B.y);
+      ctx.lineTo(Hc.x + dx, Hc.y);
+      ctx.lineTo(C.x + dx, C.y);
+      ctx.closePath();
+      ctx.fillStyle = COL.move;
+      ctx.fill();
+      ctx.strokeStyle = COL.moveS;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    /* 4. Пустые места для треугольника (пунктирные уголки) */
+    if (state.fill > 0.002 && state.move < 0.998) {
+      ctx.globalAlpha = Math.min(state.fill, 1 - state.move);
+      ctx.setLineDash([6, 6]);
+      ctx.strokeStyle = COL.moveS;
+      ctx.lineWidth = 1.5;
+
+      // Правый пустой уголок (откуда улетел треугольник)
+      ctx.beginPath();
+      ctx.moveTo(B.x, B.y);
+      ctx.lineTo(Hc.x, Hc.y);
+      ctx.lineTo(C.x, C.y);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Левый пустой уголок (куда он прилетит)
+      ctx.beginPath();
+      ctx.moveTo(A.x, A.y);
+      ctx.lineTo(Hd.x, Hd.y);
+      ctx.lineTo(D.x, D.y);
+      ctx.closePath();
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
+    /* 5. Контур параллелограмма */
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.lineTo(C.x, C.y);
+    ctx.lineTo(D.x, D.y);
+    ctx.closePath();
+    ctx.strokeStyle = COL.paraS;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = 1 - state.move * 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    /* 6. Высоты */
+    ctx.beginPath();
+    ctx.moveTo(D.x, D.y);
+    ctx.lineTo(D.x, baseY);
+    ctx.moveTo(C.x, C.y);
+    ctx.lineTo(C.x, baseY);
+    ctx.strokeStyle = COL.height;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Прямые углы
+    const rs = 14;
+    ctx.strokeStyle = COL.muted;
+    ctx.lineWidth = 1.6;
+
+    // Угол у D
+    ctx.beginPath();
+    ctx.moveTo(D.x + rs, baseY);
+    ctx.lineTo(D.x + rs, baseY - rs);
+    ctx.lineTo(D.x, baseY - rs);
+    ctx.stroke();
+
+    // Угол у C
+    ctx.beginPath();
+    ctx.moveTo(C.x - rs, baseY);
+    ctx.lineTo(C.x - rs, baseY - rs);
+    ctx.lineTo(C.x, baseY - rs);
+    ctx.stroke();
+
+    label('h', D.x - 18, (topY + baseY) / 2, COL.height, 16);
+
+    /* 7. Маркеры вершин */
+    handle(A, '#2563eb', state.drag === 'A');
+    handle(B, '#2563eb', state.drag === 'B');
+    handle(C, '#2563eb', state.drag === 'C');
+    handle(D, '#2563eb', state.drag === 'D');
+
+    /* 8. Подписи */
+    label('a', (A.x + B.x) / 2, baseY + 30, '#2563eb', 17);
+    label('b', (D.x + C.x) / 2, topY - 25, '#2563eb', 17);
+
+    ctx.restore();
+  }
+
+  function drawGrid() {
+    ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= WORLD.w; x += U) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, WORLD.h);
+    }
+    for (let y = 0; y <= WORLD.h; y += U) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(WORLD.w, y);
+    }
+    ctx.stroke();
+  }
+
+  function label(text, x, y, color, size) {
+    size = size || 19;
+    ctx.font = '700 ' + size + 'px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(248,250,252,0.96)';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+  }
+
+  function handle(p, color, active) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, active ? 11 : 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+  }
+
+  /* ---------- анимация ---------- */
+
+  function tick() {
+    let dirty = false;
+
+    if (Math.abs(state.fill - state.fillTarget) > 0.0005) {
+      state.fill += (state.fillTarget - state.fill) * 0.16;
+      if (Math.abs(state.fill - state.fillTarget) < 0.004) state.fill = state.fillTarget;
+      dirty = true;
+    }
+    if (Math.abs(state.move - state.moveTarget) > 0.0005) {
+      state.move += (state.moveTarget - state.move) * 0.10;
+      if (Math.abs(state.move - state.moveTarget) < 0.004) state.move = state.moveTarget;
+      dirty = true;
+    }
+    
+    if (dirty) draw();
+
+    requestAnimationFrame(tick);
+  }
+
+  /* ---------- данные ---------- */
+
+  function updateReadout() {
+    const a = (state.B.x - state.A.x) / U;
+    const b = (state.C.x - state.D.x) / U;
+    const h = (state.baseY - state.D.y) / U;
+
+    document.getElementById('ra').textContent = a.toFixed(1);
+    document.getElementById('rb').textContent = b.toFixed(1);
+    document.getElementById('rh').textContent = h.toFixed(1);
+    document.getElementById('rs').textContent = (a * h).toFixed(1);
+  }
+
+  /* ---------- взаимодействие ---------- */
+
+  cv.addEventListener('pointerdown', function (e) {
+    const p = toWorld(e.clientX, e.clientY);
+    let best = null, bd = HIT;
+    ['A', 'B', 'C', 'D'].forEach(function (k) {
+      const d = Math.hypot(state[k].x - p.x, state[k].y - p.y);
+      if (d < bd) { bd = d; best = k; }
+    });
+    if (best) {
+      state.drag = best;
+      cv.setPointerCapture(e.pointerId);
+      cv.style.cursor = 'grabbing';
+      e.preventDefault();
+      draw();
+    }
+  });
+
+  cv.addEventListener('pointermove', function (e) {
+    const p = toWorld(e.clientX, e.clientY);
+
+    if (!state.drag) {
+      let near = false;
+      ['A', 'B', 'C', 'D'].forEach(function (k) {
+        if (Math.hypot(state[k].x - p.x, state[k].y - p.y) < HIT) near = true;
+      });
+      cv.style.cursor = near ? 'grab' : 'default';
+      return;
+    }
+
+    const k = state.drag;
+
+    if (k === 'A') {
+      state.A.x = clamp(p.x, 40, state.B.x - 100); 
+      // При изменении A верхнее основание C подстраивается, чтобы сохранить параллельность
+      state.C.x = state.B.x + state.D.x - state.A.x;
+    } else if (k === 'B') {
+      state.B.x = clamp(p.x, state.A.x + 100, WORLD.w - 40); 
+      state.C.x = state.B.x + state.D.x - state.A.x;
+    } else if (k === 'D') {
+      state.D.x = clamp(p.x, 40, WORLD.w - 40); 
+      state.D.y = clamp(p.y, 60, state.baseY - 100);
+      state.C.x = state.B.x + state.D.x - state.A.x;
+      state.C.y = state.D.y;
+    } else if (k === 'C') {
+      state.C.x = clamp(p.x, 40, WORLD.w - 40); 
+      state.C.y = clamp(p.y, 60, state.baseY - 100);
+      state.D.x = state.A.x + state.C.x - state.B.x;
+      state.D.y = state.C.y;
+    }
+
+    updateReadout();
+    draw();
+  });
+
+  function endDrag() {
+    if (!state.drag) return;
+    state.drag = null;
+    cv.style.cursor = 'default';
+    draw();
+  }
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
+  cv.addEventListener('pointerleave', function () {
+    if (!state.drag) cv.style.cursor = 'default';
+  });
+
+  /* ---------- панель управления ---------- */
+
+  const optRect = document.getElementById('optRect');
+  const optMove = document.getElementById('optMove');
+
+  optRect.addEventListener('change', function (e) {
+    state.fillTarget = e.target.checked ? 1 : 0;
+    if (!e.target.checked) {
+      optMove.checked = false;
+      state.moveTarget = 0;
+    }
+  });
+
+  optMove.addEventListener('change', function (e) {
+    state.moveTarget = e.target.checked ? 1 : 0;
+    if (e.target.checked) {
+      optRect.checked = true;
+      state.fillTarget = 1;
+    }
+  });
+
+  document.getElementById('reset').addEventListener('click', function () {
+    state.A.x = 200; state.B.x = 600;
+    state.D.x = 300; state.C.x = 700;
+    state.D.y = 270; state.C.y = 270;
+    updateReadout();
+    draw();
+  });
+
+  /* ---------- старт ---------- */
+
+  new ResizeObserver(resize).observe(cv.parentElement);
+  resize();
+  updateReadout();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
